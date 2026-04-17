@@ -7,6 +7,8 @@
 //
 // Ultrasonic wiring (HC-SR04):
 // VCC -> 5V, GND -> GND, TRIG -> pin 7, ECHO -> pin 8
+// IR obstacle sensor wiring:
+// VCC -> 5V, GND -> GND, OUT -> pin 5
 //
 // NOTE: Always share GND between Arduino and motor battery pack.
 
@@ -18,14 +20,17 @@ const int IN4 = 6;  // Motor B pin B
 // Ultrasonic pins (change if desired)
 const int US_TRIG_PIN = 7;
 const int US_ECHO_PIN = 8;
+const int IR_OBSTACLE_PIN = 5;
 
 // Ultrasonic measurement timeout (microseconds)
 const unsigned long US_TIMEOUT = 30000UL; // ~max 500 cm
 
 // Obstacle handling/tuning
+const bool IR_ACTIVE_LOW = true;         // most obstacle IR modules pull LOW on detect
 const int OBSTACLE_THRESHOLD_CM = 40;   // stop sooner to account for momentum
 const int OBSTACLE_CLEARANCE_CM = 50;   // hysteresis: resume only after safer gap
 const int REQUIRED_HITS = 2;            // require consecutive near readings
+const int IR_REQUIRED_HITS = 2;         // debounce IR to reduce false triggers
 const int BACKOFF_SPEED = 170;          // reverse speed after detection
 const int BACKOFF_MS = 900;             // reverse duration after detection
 const int TURN_SPEED = 150;             // turning speed for obstacle avoidance
@@ -55,8 +60,11 @@ void setup() {
   pinMode(US_ECHO_PIN, INPUT);
   digitalWrite(US_TRIG_PIN, LOW); // ensure trig is low
 
+  // IR obstacle sensor pin
+  pinMode(IR_OBSTACLE_PIN, INPUT);
+
   Serial.begin(115200);
-  Serial.println("L298N + HC-SR04 starting");
+  Serial.println("L298N + HC-SR04 + IR starting");
 }
 
 // Run one motor with given direction/speed.
@@ -134,14 +142,38 @@ long measureDistanceFilteredCM(int samples = 3) {
   return sum / valid;
 }
 
+bool isIrObstacleDetected() {
+  static int irHits = 0;
+  int raw = digitalRead(IR_OBSTACLE_PIN);
+  bool blocked = IR_ACTIVE_LOW ? (raw == LOW) : (raw == HIGH);
+
+  if (blocked) {
+    irHits++;
+  } else {
+    irHits = 0;
+  }
+
+  Serial.print("IR: ");
+  Serial.println(blocked ? "blocked" : "clear");
+
+  return irHits >= IR_REQUIRED_HITS;
+}
+
 bool isObstacleNow() {
   static int nearHits = 0;
   long d = measureDistanceFilteredCM(3);
+  bool irBlocked = isIrObstacleDetected();
 
   if (d > 0) {
     Serial.print("US(filtered): ");
     Serial.print(d);
     Serial.println(" cm");
+  }
+
+  // IR is a close-range front check. If it sees a block, react immediately.
+  if (irBlocked) {
+    nearHits = 0;
+    return true;
   }
 
   if (d > 0 && d <= OBSTACLE_THRESHOLD_CM) {
@@ -173,6 +205,7 @@ void sideStepTurn(bool moveLeftSide) {
 
 bool pathLooksClear() {
   long d = measureDistanceFilteredCM(3);
+  bool irBlocked = isIrObstacleDetected();
   if (d > 0) {
     Serial.print("US(clear-check): ");
     Serial.print(d);
@@ -180,20 +213,21 @@ bool pathLooksClear() {
   } else {
     Serial.println("US(clear-check): no echo");
   }
-  return (d == -1) || (d > OBSTACLE_CLEARANCE_CM);
+  return !irBlocked && ((d == -1) || (d > OBSTACLE_CLEARANCE_CM));
 }
 
 bool isFrontStillTooClose() {
   long d = measureDistanceFilteredCM(3);
+  bool irBlocked = isIrObstacleDetected();
   if (d > 0) {
     Serial.print("US(stuck-check): ");
     Serial.print(d);
     Serial.println(" cm");
-    return d <= OBSTACLE_THRESHOLD_CM;
+    return irBlocked || (d <= OBSTACLE_THRESHOLD_CM);
   }
-  // If no echo, do not treat as stuck.
+  // If no echo, fall back to the close-range IR sensor.
   Serial.println("US(stuck-check): no echo");
-  return false;
+  return irBlocked;
 }
 
 void reverseWithBoostAndWiggle() {
