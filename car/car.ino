@@ -1,5 +1,5 @@
 // Full sketch: L298N (two motor groups) + HC-SR04 ultrasonic obstacle detection
-// Motor wiring (same as your setup):
+// Motor wiring:
 // IN1 -> pin 11 (PWM)  Motor A, pinA
 // IN2 -> pin 10 (PWM)  Motor A, pinB
 // IN3 -> pin 9  (PWM)  Motor B, pinA
@@ -8,7 +8,8 @@
 // Ultrasonic wiring (HC-SR04):
 // VCC -> 5V, GND -> GND, TRIG -> pin 7, ECHO -> pin 8
 // IR obstacle sensor wiring:
-// VCC -> 5V, GND -> GND, OUT -> pin 5
+// Front sensor: VCC -> 5V, GND -> GND, OUT -> pin 5
+// Rear sensor:  VCC -> 5V, GND -> GND, OUT -> pin 4
 //
 // NOTE: Always share GND between Arduino and motor battery pack.
 
@@ -17,65 +18,82 @@ const int IN2 = 10; // Motor A pin B
 const int IN3 = 9;  // Motor B pin A
 const int IN4 = 6;  // Motor B pin B
 
-// Ultrasonic pins (change if desired)
 const int US_TRIG_PIN = 7;
 const int US_ECHO_PIN = 8;
-const int IR_OBSTACLE_PIN = 5;
+const int FRONT_IR_OBSTACLE_PIN = 5;
+const int REAR_IR_OBSTACLE_PIN = 4;
 
-// Ultrasonic measurement timeout (microseconds)
 const unsigned long US_TIMEOUT = 30000UL; // ~max 500 cm
 
-// Obstacle handling/tuning
+// Simplified obstacle controller tuning.
 const bool IR_ACTIVE_LOW = true;         // most obstacle IR modules pull LOW on detect
-const int OBSTACLE_THRESHOLD_CM = 40;   // stop sooner to account for momentum
-const int OBSTACLE_CLEARANCE_CM = 50;   // hysteresis: resume only after safer gap
-const int REQUIRED_HITS = 2;            // require consecutive near readings
-const int IR_REQUIRED_HITS = 2;         // debounce IR to reduce false triggers
-const int BACKOFF_SPEED = 170;          // reverse speed after detection
-const int BACKOFF_MS = 900;             // reverse duration after detection
-const int TURN_SPEED = 150;             // turning speed for obstacle avoidance
-const int TURN_MS = 320;                // turn duration per try
-const int TURN_SETTLE_MS = 120;         // pause before re-checking sensor
-const int TURN_TRIES_PER_SIDE = 5;      // tries per side before switching
-const int ESCAPE_BOOST_SPEED = 235;     // short high-power reverse burst
-const int ESCAPE_BOOST_MS = 220;        // burst duration
-const int ESCAPE_WIGGLE_MS = 180;       // one-side reverse wiggle duration
-const int ESCAPE_TRIES = 3;             // repeated unstuck tries
+const int FRONT_STOP_CM = 40;            // stop distance for front obstacles
+const int FRONT_CLEAR_CM = 50;           // clearance hysteresis after obstacle
+const int IR_ASSIST_US_CM = 45;          // only trust brief front IR hits when ultrasonic also sees something nearby
+const int US_REQUIRED_HITS = 2;          // consecutive ultrasonic hits before stop
+const int FRONT_IR_REQUIRED_HITS = 3;    // debounce front IR
+const int FRONT_IR_ONLY_REQUIRED_HITS = 12; // sustained IR-only block before stop
+const int REAR_IR_REQUIRED_HITS = 3;     // debounce rear IR
+const int FORWARD_SPEED = 120;           // steady forward speed
+const int REVERSE_SPEED = 110;           // gentle reverse speed
+const int REVERSE_MS = 260;              // short reverse to create space
+const int TURN_SPEED = 110;              // in-place turn speed
+const int TURN_MS = 180;                 // in-place turn duration
+const int TURN_SETTLE_MS = 120;          // pause after turning
+const int TURN_TRIES_PER_SIDE = 2;       // tries per side before switching
+const int FRONT_BLOCK_HOLD_MS = 90;      // require a stable front block before committing to avoidance
+
+enum RobotState {
+  DRIVE_FORWARD,
+  REVERSE_AWAY,
+  TURN_LEFT,
+  TURN_RIGHT,
+  SETTLE,
+  BLOCKED
+};
+
+RobotState currentState = DRIVE_FORWARD;
+unsigned long stateStartedAt = 0;
+bool nextPreferredTurnLeft = true;
+bool currentTurnLeft = true;
+bool triedOtherSide = false;
+int turnsOnCurrentSide = 0;
+int frontIrHits = 0;
+int rearIrHits = 0;
+int usNearHits = 0;
+long frontDistanceCm = -1;
+bool frontIrBlocked = false;
+bool rearIrBlocked = false;
+unsigned long frontBlockedStartedAt = 0;
 
 void setup() {
-  // Motor pins
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
 
-  // Make sure motors are off initially
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, LOW);
 
-  // Ultrasonic pins
   pinMode(US_TRIG_PIN, OUTPUT);
   pinMode(US_ECHO_PIN, INPUT);
-  digitalWrite(US_TRIG_PIN, LOW); // ensure trig is low
+  digitalWrite(US_TRIG_PIN, LOW);
 
-  // IR obstacle sensor pin
-  pinMode(IR_OBSTACLE_PIN, INPUT);
+  pinMode(FRONT_IR_OBSTACLE_PIN, INPUT);
+  pinMode(REAR_IR_OBSTACLE_PIN, INPUT);
 
   Serial.begin(115200);
-  Serial.println("L298N + HC-SR04 + IR starting");
+  Serial.println("L298N + HC-SR04 + front/rear IR starting");
+  Serial.println("Front IR pin: D5, Rear IR pin: D4");
+  Serial.println("State -> DRIVE_FORWARD");
 }
 
-// Run one motor with given direction/speed.
-// pinA, pinB: the two control pins for that motor channel.
-// speed: 0..255 (0 = stop). forward=true => PWM on pinA, pinB LOW.
-// forward=false => PWM on pinB, pinA LOW.
 void runMotor(int pinA, int pinB, int speed, bool forward) {
   speed = constrain(speed, 0, 255);
 
   if (speed == 0) {
-    // Brake/stop: both low
     digitalWrite(pinA, LOW);
     digitalWrite(pinB, LOW);
     return;
@@ -90,22 +108,17 @@ void runMotor(int pinA, int pinB, int speed, bool forward) {
   }
 }
 
-// Move both motor groups together
 void moveBoth(int speed, bool forward) {
-  runMotor(IN1, IN2, speed, forward); // left side (Motor A)
-  runMotor(IN3, IN4, speed, forward); // right side (Motor B)
+  runMotor(IN1, IN2, speed, forward);
+  runMotor(IN3, IN4, speed, forward);
 }
 
-// Stop both motors
 void stopMotors() {
   runMotor(IN1, IN2, 0, true);
   runMotor(IN3, IN4, 0, true);
 }
 
-// Measure distance in centimeters using HC-SR04.
-// Returns: distance in cm (integer) or -1 if no echo within timeout.
 long measureDistanceCM() {
-  // Trigger a 10µs pulse
   digitalWrite(US_TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(US_TRIG_PIN, HIGH);
@@ -113,21 +126,16 @@ long measureDistanceCM() {
   digitalWrite(US_TRIG_PIN, LOW);
 
   unsigned long duration = pulseIn(US_ECHO_PIN, HIGH, US_TIMEOUT);
-
   if (duration == 0UL) {
-    return -1; // timeout/no echo
+    return -1;
   }
-
-  // Convert to cm: sound round-trip ~58 µs per cm
-  long cm = duration / 58UL;
-  return cm;
+  return duration / 58UL;
 }
 
-// Read several distance samples and return a stable value.
-// Returns -1 if all samples timed out.
 long measureDistanceFilteredCM(int samples = 3) {
   long sum = 0;
   int valid = 0;
+
   for (int i = 0; i < samples; i++) {
     long d = measureDistanceCM();
     if (d > 0) {
@@ -136,222 +144,222 @@ long measureDistanceFilteredCM(int samples = 3) {
     }
     delay(8);
   }
+
   if (valid == 0) {
     return -1;
   }
   return sum / valid;
 }
 
-bool isIrObstacleDetected() {
-  static int irHits = 0;
-  int raw = digitalRead(IR_OBSTACLE_PIN);
+bool readFrontIrBlocked() {
+  int raw = digitalRead(FRONT_IR_OBSTACLE_PIN);
   bool blocked = IR_ACTIVE_LOW ? (raw == LOW) : (raw == HIGH);
 
   if (blocked) {
-    irHits++;
+    frontIrHits++;
   } else {
-    irHits = 0;
+    frontIrHits = 0;
   }
 
-  Serial.print("IR: ");
-  Serial.println(blocked ? "blocked" : "clear");
-
-  return irHits >= IR_REQUIRED_HITS;
+  return frontIrHits >= FRONT_IR_REQUIRED_HITS;
 }
 
-bool isObstacleNow() {
-  static int nearHits = 0;
-  long d = measureDistanceFilteredCM(3);
-  bool irBlocked = isIrObstacleDetected();
+bool readRearIrBlocked() {
+  int raw = digitalRead(REAR_IR_OBSTACLE_PIN);
+  bool blocked = IR_ACTIVE_LOW ? (raw == LOW) : (raw == HIGH);
 
-  if (d > 0) {
-    Serial.print("US(filtered): ");
-    Serial.print(d);
-    Serial.println(" cm");
-  }
-
-  // IR is a close-range front check. If it sees a block, react immediately.
-  if (irBlocked) {
-    nearHits = 0;
-    return true;
-  }
-
-  if (d > 0 && d <= OBSTACLE_THRESHOLD_CM) {
-    nearHits++;
-  } else if (d > OBSTACLE_CLEARANCE_CM || d == -1) {
-    nearHits = 0;
-  }
-
-  if (nearHits >= REQUIRED_HITS) {
-    nearHits = 0;
-    return true;
-  }
-  return false;
-}
-
-// Move only one side forward while the other side is stopped.
-// This creates a pivot/arc turn to "sidestep" around obstacles.
-// moveLeftSide=true  => left side moves, right side locked.
-// moveLeftSide=false => right side moves, left side locked.
-void sideStepTurn(bool moveLeftSide) {
-  if (moveLeftSide) {
-    runMotor(IN3, IN4, 0, true);              // lock right side
-    runMotor(IN1, IN2, TURN_SPEED, true);     // move left side
+  if (blocked) {
+    rearIrHits++;
   } else {
-    runMotor(IN1, IN2, 0, true);              // lock left side
-    runMotor(IN3, IN4, TURN_SPEED, true);     // move right side
+    rearIrHits = 0;
   }
+
+  return rearIrHits >= REAR_IR_REQUIRED_HITS;
 }
 
-bool pathLooksClear() {
-  long d = measureDistanceFilteredCM(3);
-  bool irBlocked = isIrObstacleDetected();
-  if (d > 0) {
-    Serial.print("US(clear-check): ");
-    Serial.print(d);
-    Serial.println(" cm");
+void updateSensors() {
+  frontDistanceCm = measureDistanceFilteredCM(3);
+  frontIrBlocked = readFrontIrBlocked();
+  rearIrBlocked = readRearIrBlocked();
+
+  if (frontDistanceCm > 0 && frontDistanceCm <= FRONT_STOP_CM) {
+    usNearHits++;
   } else {
-    Serial.println("US(clear-check): no echo");
+    usNearHits = 0;
   }
-  return !irBlocked && ((d == -1) || (d > OBSTACLE_CLEARANCE_CM));
 }
 
-bool isFrontStillTooClose() {
-  long d = measureDistanceFilteredCM(3);
-  bool irBlocked = isIrObstacleDetected();
-  if (d > 0) {
-    Serial.print("US(stuck-check): ");
-    Serial.print(d);
-    Serial.println(" cm");
-    return irBlocked || (d <= OBSTACLE_THRESHOLD_CM);
-  }
-  // If no echo, fall back to the close-range IR sensor.
-  Serial.println("US(stuck-check): no echo");
-  return irBlocked;
+bool frontBlockedNow() {
+  bool usBlocked = usNearHits >= US_REQUIRED_HITS;
+  bool irAssistedByUs = frontIrBlocked &&
+                        frontDistanceCm > 0 &&
+                        frontDistanceCm <= IR_ASSIST_US_CM;
+  bool irEmergencyOnly = frontIrHits >= FRONT_IR_ONLY_REQUIRED_HITS;
+
+  return usBlocked || irAssistedByUs || irEmergencyOnly;
 }
 
-void reverseWithBoostAndWiggle() {
-  // Strong kick to break static friction.
-  moveBoth(ESCAPE_BOOST_SPEED, false);
-  delay(ESCAPE_BOOST_MS);
+bool frontClearNow() {
+  return (frontDistanceCm == -1) || (frontDistanceCm > FRONT_CLEAR_CM);
+}
 
-  // Continue normal reverse to gain distance.
-  moveBoth(BACKOFF_SPEED, false);
-  delay(BACKOFF_MS);
+bool frontBlockedStableNow() {
+  if (!frontBlockedNow()) {
+    frontBlockedStartedAt = 0;
+    return false;
+  }
+
+  if (frontBlockedStartedAt == 0) {
+    frontBlockedStartedAt = millis();
+    return false;
+  }
+
+  return millis() - frontBlockedStartedAt >= (unsigned long)FRONT_BLOCK_HOLD_MS;
+}
+
+const char* stateName(RobotState state) {
+  switch (state) {
+    case DRIVE_FORWARD: return "DRIVE_FORWARD";
+    case REVERSE_AWAY: return "REVERSE_AWAY";
+    case TURN_LEFT: return "TURN_LEFT";
+    case TURN_RIGHT: return "TURN_RIGHT";
+    case SETTLE: return "SETTLE";
+    case BLOCKED: return "BLOCKED";
+    default: return "UNKNOWN";
+  }
+}
+
+void setState(RobotState newState) {
+  currentState = newState;
+  stateStartedAt = millis();
+  frontBlockedStartedAt = 0;
+  Serial.print("State -> ");
+  Serial.println(stateName(newState));
+}
+
+void startAvoidance() {
   stopMotors();
-  delay(120);
+  currentTurnLeft = nextPreferredTurnLeft;
+  triedOtherSide = false;
+  turnsOnCurrentSide = 0;
 
-  // If still close, do asymmetric reverse wiggles to peel away.
-  if (isFrontStillTooClose()) {
-    runMotor(IN1, IN2, BACKOFF_SPEED, false); // left reverse only
-    runMotor(IN3, IN4, 0, true);
-    delay(ESCAPE_WIGGLE_MS);
-    stopMotors();
-    delay(80);
-
-    runMotor(IN1, IN2, 0, true);
-    runMotor(IN3, IN4, BACKOFF_SPEED, false); // right reverse only
-    delay(ESCAPE_WIGGLE_MS);
-    stopMotors();
-    delay(80);
+  if (!rearIrBlocked) {
+    setState(REVERSE_AWAY);
+  } else {
+    setState(currentTurnLeft ? TURN_LEFT : TURN_RIGHT);
   }
 }
 
-void handleObstacleAvoidance() {
-  Serial.println("Obstacle detected! Stop, back off, and avoid.");
+void rotateLeftInPlace() {
+  runMotor(IN1, IN2, TURN_SPEED, false);
+  runMotor(IN3, IN4, TURN_SPEED, true);
+}
+
+void rotateRightInPlace() {
+  runMotor(IN1, IN2, TURN_SPEED, true);
+  runMotor(IN3, IN4, TURN_SPEED, false);
+}
+
+void handleStateDriveForward() {
+  moveBoth(FORWARD_SPEED, true);
+
+  if (frontBlockedStableNow()) {
+    startAvoidance();
+  }
+}
+
+void handleStateReverseAway() {
+  if (rearIrBlocked) {
+    stopMotors();
+    setState(currentTurnLeft ? TURN_LEFT : TURN_RIGHT);
+    return;
+  }
+
+  moveBoth(REVERSE_SPEED, false);
+  if (millis() - stateStartedAt >= (unsigned long)REVERSE_MS) {
+    stopMotors();
+    setState(currentTurnLeft ? TURN_LEFT : TURN_RIGHT);
+  }
+}
+
+void handleStateTurn(bool turnLeft) {
+  if (turnLeft) {
+    rotateLeftInPlace();
+  } else {
+    rotateRightInPlace();
+  }
+
+  if (millis() - stateStartedAt >= (unsigned long)TURN_MS) {
+    stopMotors();
+    turnsOnCurrentSide++;
+    setState(SETTLE);
+  }
+}
+
+void handleStateSettle() {
   stopMotors();
-  delay(120); // allow chassis to settle before reversing
 
-  for (int t = 1; t <= ESCAPE_TRIES; t++) {
-    Serial.print("Escape try ");
-    Serial.print(t);
-    Serial.print("/");
-    Serial.println(ESCAPE_TRIES);
-    reverseWithBoostAndWiggle();
-
-    if (!isFrontStillTooClose()) {
-      break;
-    }
-  }
-  delay(200);
-
-  // Rule: try one side 5 times; if still blocked, try the other side 5 times.
-  // Order below starts with right-side move (left locked), then left-side move.
-  bool sideOrder[2] = {false, true};
-  for (int side = 0; side < 2; side++) {
-    Serial.print("Avoid side group: ");
-    Serial.println(side == 0 ? "RIGHT-SIDE-MOVE" : "LEFT-SIDE-MOVE");
-
-    for (int i = 1; i <= TURN_TRIES_PER_SIDE; i++) {
-      Serial.print("Turn try ");
-      Serial.print(i);
-      Serial.print("/");
-      Serial.println(TURN_TRIES_PER_SIDE);
-
-      sideStepTurn(sideOrder[side]);
-      delay(TURN_MS);
-      stopMotors();
-      delay(TURN_SETTLE_MS);
-
-      if (pathLooksClear()) {
-        Serial.println("Path clear after turning.");
-        return;
-      }
-    }
+  if (millis() - stateStartedAt < (unsigned long)TURN_SETTLE_MS) {
+    return;
   }
 
-  Serial.println("Path still blocked after both-side attempts.");
+  if (frontClearNow()) {
+    nextPreferredTurnLeft = !nextPreferredTurnLeft;
+    setState(DRIVE_FORWARD);
+    return;
+  }
+
+  if (turnsOnCurrentSide < TURN_TRIES_PER_SIDE) {
+    setState(currentTurnLeft ? TURN_LEFT : TURN_RIGHT);
+    return;
+  }
+
+  if (!triedOtherSide) {
+    triedOtherSide = true;
+    currentTurnLeft = !currentTurnLeft;
+    turnsOnCurrentSide = 0;
+
+    if (!rearIrBlocked) {
+      setState(REVERSE_AWAY);
+    } else {
+      setState(currentTurnLeft ? TURN_LEFT : TURN_RIGHT);
+    }
+    return;
+  }
+
+  setState(BLOCKED);
+}
+
+void handleStateBlocked() {
+  stopMotors();
+
+  if (frontClearNow()) {
+    nextPreferredTurnLeft = !nextPreferredTurnLeft;
+    setState(DRIVE_FORWARD);
+  }
 }
 
 void loop() {
-  // Tunable parameters
-  const int minSpeed = 110;    // starting ramp speed (0..255)
-  const int maxSpeed = 200;    // top ramp speed (reduced to shorten stopping distance)
-  const int step = 8;          // ramp step
-  const int rampDelay = 30;    // ms between ramp steps
-  const int holdMs = 1000;     // hold after ramp
-  const int holdCheckEveryMs = 60;
+  updateSensors();
 
-  Serial.println("Ramping FORWARD");
-  // Ramp forward from minSpeed -> maxSpeed
-  for (int s = minSpeed; s <= maxSpeed; s += step) {
-    moveBoth(s, true); // true = forward
-
-    if (isObstacleNow()) {
-      handleObstacleAvoidance();
-      goto START_BACKWARD;
-    }
-
-    delay(rampDelay);
+  switch (currentState) {
+    case DRIVE_FORWARD:
+      handleStateDriveForward();
+      break;
+    case REVERSE_AWAY:
+      handleStateReverseAway();
+      break;
+    case TURN_LEFT:
+      handleStateTurn(true);
+      break;
+    case TURN_RIGHT:
+      handleStateTurn(false);
+      break;
+    case SETTLE:
+      handleStateSettle();
+      break;
+    case BLOCKED:
+      handleStateBlocked();
+      break;
   }
-
-  // Hold forward briefly only if path is clear.
-  // Keep checking during hold to avoid crashing at max speed.
-  Serial.println("Holding forward (guarded)");
-  unsigned long holdStart = millis();
-  while (millis() - holdStart < (unsigned long)holdMs) {
-    if (isObstacleNow()) {
-      Serial.println("Obstacle during hold.");
-      handleObstacleAvoidance();
-      goto START_BACKWARD;
-    }
-    moveBoth(maxSpeed, true);
-    delay(holdCheckEveryMs);
-  }
-
-START_BACKWARD:
-  Serial.println("Ramping BACKWARD");
-  // Ramp backward from maxSpeed -> minSpeed
-  for (int s = maxSpeed; s >= minSpeed; s -= step) {
-    moveBoth(s, false); // false = backward
-    delay(rampDelay);
-  }
-
-  Serial.println("Holding backward");
-  delay(holdMs);
-
-  // Stop briefly before next cycle
-  Serial.println("Cycle complete - stopping briefly");
-  stopMotors();
-  delay(700);
 }
