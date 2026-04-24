@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$PROJECT_DIR/.." && pwd)"
 GENERIC_HELPER="$ROOT_DIR/build-upload-sketch.sh"
 
-# Hardcoded car upload configuration.
-CAR_SKETCH_DIR="$ROOT_DIR/car"
+CAR_SKETCH_DIR="$PROJECT_DIR"
 CAR_FQBN="arduino:avr:uno"
 CAR_PORT="/dev/ttyUSB0"
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./upload-car-sketch.sh [--mode <compile|upload>]
+  ./arduino-uno-car/upload-sketch.sh [--mode <compile|upload>]
 
 Behavior:
-  - Uses the hardcoded car sketch path, board type, and USB port.
+  - Uses the hardcoded Arduino Uno car sketch path, board type, and USB port.
   - Default mode is `upload`.
   - `--mode compile` only compiles.
   - `--mode upload` compiles first, then uploads.

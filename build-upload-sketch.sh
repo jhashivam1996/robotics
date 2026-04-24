@@ -7,8 +7,8 @@ Usage:
   ./build-upload-sketch.sh --mode <compile|upload> --fqbn <fqbn> --sketch <path> [--port <port>]
 
 Examples:
-  ./build-upload-sketch.sh --mode compile --fqbn arduino:avr:uno --sketch ./car
-  ./build-upload-sketch.sh --mode upload --fqbn arduino:avr:uno --sketch ./car --port /dev/ttyACM0
+  ./build-upload-sketch.sh --mode compile --fqbn arduino:avr:uno --sketch ./arduino-uno-car
+  ./build-upload-sketch.sh --mode upload --fqbn arduino:avr:uno --sketch ./arduino-uno-car --port /dev/ttyACM0
 
 Notes:
   - Requires arduino-cli to be installed and on PATH.

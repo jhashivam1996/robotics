@@ -43,7 +43,7 @@ Do not put robot-specific hardware behavior, wiring, or tuning rules here. Those
 3. `README.md` should remain high-level.
 4. If a project needs detailed operational rules, create a dedicated document with a specific name such as:
    - `docs/robot-rules.md`
-   - `car/BEHAVIOR.md`
+   - `arduino-uno-car/BEHAVIOR.md`
    - `HARDWARE.md`
 
 ## Verification Rules

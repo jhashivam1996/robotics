@@ -2,11 +2,11 @@
 
 ## Scope
 
-This file contains robot-specific behavior, hardware, and tuning notes for the car project.
+This file contains robot-specific behavior, hardware, and tuning notes for the Arduino Uno car project.
 
 Active sketch:
 
-- `car.ino`
+- `arduino-uno-car.ino`
 
 ## Hardware
 
