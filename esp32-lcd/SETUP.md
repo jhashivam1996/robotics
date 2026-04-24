@@ -101,6 +101,21 @@ cd esp32-lcd
 ./upload-sketch.sh --mode upload --port /dev/ttyUSB1
 ```
 
+## Serial Monitor
+
+From the repository root:
+
+```bash
+./esp32-lcd/monitor.sh
+```
+
+From inside the project directory:
+
+```bash
+cd esp32-lcd
+./monitor.sh
+```
+
 ## References
 
 These setup commands are based on Espressif's Arduino-ESP32 installation documentation and package index:

@@ -8,7 +8,7 @@ ESP32_COMMON_HELPER="$ROOT_DIR/esp32-wrapper-common.sh"
 
 source "$ESP32_COMMON_HELPER"
 
-ESP32_LCD_I2C_SKETCH_DIR="$PROJECT_DIR"
+ESP32_CAMERA_SKETCH_DIR="$PROJECT_DIR"
 DEFAULT_ESP32_FQBN="esp32:esp32:esp32doit-devkit-v1"
 DEFAULT_ESP32_PORT="/dev/ttyUSB0"
 MODE="upload"
@@ -18,38 +18,8 @@ PORT="$DEFAULT_ESP32_PORT"
 usage() {
   cat <<'EOF'
 Usage:
-  ./esp32-lcd-i2c/upload-sketch.sh [--mode <compile|upload>] [--fqbn <fqbn>] [--port <port>]
-
-Behavior:
-  - Uses the hardcoded ESP32 I2C LCD sketch path.
-  - Default mode is `upload`.
-  - `--mode compile` only compiles.
-  - `--mode upload` compiles first, then uploads.
-  - Default board is `esp32:esp32:esp32doit-devkit-v1`.
-  - Default port is `/dev/ttyUSB0`.
-  - Override `--fqbn` if you are using a different ESP32 board definition.
-  - Override `--port` if your ESP32 appears on a different serial device.
-
-Preflight checks:
-  - Confirms the requested ESP32 board core is installed.
-  - Confirms a library providing `LiquidCrystal_I2C.h` is installed.
-  - Confirms Python `pyserial` is available for the installed ESP32 toolchain.
+  ./esp32-ov7670-camera-phase3/upload-sketch.sh [--mode <compile|upload>] [--fqbn <fqbn>] [--port <port>]
 EOF
-}
-
-require_header_library() {
-  local header_name="$1"
-  shift
-
-  local root
-  for root in "$@"; do
-    [[ -d "$root" ]] || continue
-    if find "$root" -name "$header_name" -print -quit | grep -q .; then
-      return 0
-    fi
-  done
-
-  return 1
 }
 
 preflight_check_esp32_core() {
@@ -62,35 +32,13 @@ preflight_check_esp32_core() {
     echo >&2
     echo "Installed cores:" >&2
     arduino-cli core list >&2
-    echo >&2
-    echo "Install the required core, then retry." >&2
     exit 1
   fi
-}
-
-preflight_check_lcd_library() {
-  local search_roots=(
-    "$ROOT_DIR/libraries"
-    "$HOME/Arduino/libraries"
-    "$HOME/Documents/Arduino/libraries"
-  )
-
-  if require_header_library "LiquidCrystal_I2C.h" "${search_roots[@]}"; then
-    return
-  fi
-
-  echo "Missing LCD library header: LiquidCrystal_I2C.h" >&2
-  echo "Install a compatible Arduino library that provides this header, then retry." >&2
-  echo >&2
-  echo "Common option:" >&2
-  echo "  arduino-cli lib install \"LiquidCrystal I2C\"" >&2
-  exit 1
 }
 
 preflight_check_pyserial() {
   if ! command -v python3 >/dev/null 2>&1; then
     echo "Missing Python runtime: python3" >&2
-    echo "The installed ESP32 board tools require python3 to run esptool." >&2
     exit 1
   fi
 
@@ -99,8 +47,6 @@ preflight_check_pyserial() {
   fi
 
   echo "Missing Python module: serial" >&2
-  echo "The installed ESP32 board tools require pyserial for compile/upload steps." >&2
-  echo >&2
   echo "Common fixes:" >&2
   echo "  Option 1: sudo apt install python3-serial" >&2
   echo "  Option 2: python3 -m pip install --user pyserial" >&2
@@ -140,13 +86,12 @@ if [[ "$MODE" != "compile" && "$MODE" != "upload" ]]; then
 fi
 
 preflight_check_esp32_core
-preflight_check_lcd_library
 preflight_check_pyserial
 
 ARGS=(
   --mode "$MODE"
   --fqbn "$FQBN"
-  --sketch "$ESP32_LCD_I2C_SKETCH_DIR"
+  --sketch "$ESP32_CAMERA_SKETCH_DIR"
 )
 UPLOAD_HELP_PORT=""
 

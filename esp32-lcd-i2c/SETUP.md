@@ -86,3 +86,18 @@ From inside the project directory:
 cd esp32-lcd-i2c
 ./upload-sketch.sh --mode upload --port /dev/ttyUSB1
 ```
+
+## Serial Monitor
+
+From the repository root:
+
+```bash
+./esp32-lcd-i2c/monitor.sh
+```
+
+From inside the project directory:
+
+```bash
+cd esp32-lcd-i2c
+./monitor.sh
+```

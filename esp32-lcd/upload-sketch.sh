@@ -4,6 +4,9 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$PROJECT_DIR/.." && pwd)"
 GENERIC_HELPER="$ROOT_DIR/build-upload-sketch.sh"
+ESP32_COMMON_HELPER="$ROOT_DIR/esp32-wrapper-common.sh"
+
+source "$ESP32_COMMON_HELPER"
 
 ESP32_LCD_SKETCH_DIR="$PROJECT_DIR"
 DEFAULT_ESP32_FQBN="esp32:esp32:esp32doit-devkit-v1"
@@ -145,9 +148,11 @@ ARGS=(
   --fqbn "$FQBN"
   --sketch "$ESP32_LCD_SKETCH_DIR"
 )
+UPLOAD_HELP_PORT=""
 
 if [[ "$MODE" == "upload" ]]; then
   ARGS+=(--port "$PORT")
+  UPLOAD_HELP_PORT="$PORT"
 fi
 
-"$GENERIC_HELPER" "${ARGS[@]}"
+esp32_run_upload_helper "$GENERIC_HELPER" "$UPLOAD_HELP_PORT" "${ARGS[@]}"

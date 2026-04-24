@@ -48,6 +48,21 @@ cd arduino-uno-car
 ./upload-sketch.sh --mode upload
 ```
 
+## Serial Monitor
+
+From the repository root:
+
+```bash
+./arduino-uno-car/monitor.sh
+```
+
+From inside the project directory:
+
+```bash
+cd arduino-uno-car
+./monitor.sh
+```
+
 ## Port Note
 
 The Arduino Uno car wrapper currently hardcodes:

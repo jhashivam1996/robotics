@@ -22,3 +22,8 @@ rad.json
 *.flf
 #Test results file
 TestResults.xml
+
+# OV7670 phase-3 capture outputs
+esp32-ov7670-camera-phase3/frame.log
+esp32-ov7670-camera-phase3/frame.pgm
+esp32-ov7670-camera-phase3/frame.png
