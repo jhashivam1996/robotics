@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  ./build-upload-sketch.sh --mode <compile|upload> --fqbn <fqbn> --sketch <path> [--port <port>]
+  ./build-upload-sketch.sh --mode <compile|upload> --fqbn <fqbn> --sketch <path> [--port <port>] [--board-options <key=value[,key=value...]>]
 
 Examples:
   ./build-upload-sketch.sh --mode compile --fqbn arduino:avr:uno --sketch ./arduino-uno-car
@@ -14,6 +14,7 @@ Notes:
   - Requires arduino-cli to be installed and on PATH.
   - `--mode upload` compiles first, then uploads.
   - `--port` is required only for upload mode.
+  - `--board-options` can be repeated to pass Arduino board menu selections such as `UploadSpeed=115200`.
 EOF
 }
 
@@ -48,6 +49,7 @@ MODE=""
 FQBN=""
 SKETCH_DIR=""
 PORT=""
+BOARD_OPTIONS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -65,6 +67,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --port)
       PORT="${2:-}"
+      shift 2
+      ;;
+    --board-options)
+      BOARD_OPTIONS+=("${2:-}")
       shift 2
       ;;
     -h|--help)
@@ -110,8 +116,25 @@ fi
 
 require_arduino_cli
 
-arduino-cli compile --fqbn "$FQBN" "$SKETCH_DIR"
+COMPILE_ARGS=(
+  --fqbn "$FQBN"
+)
+
+for option in "${BOARD_OPTIONS[@]}"; do
+  COMPILE_ARGS+=(--board-options "$option")
+done
+
+arduino-cli compile "${COMPILE_ARGS[@]}" "$SKETCH_DIR"
 
 if [[ "$MODE" == "upload" ]]; then
-  arduino-cli upload --fqbn "$FQBN" --port "$PORT" "$SKETCH_DIR"
+  UPLOAD_ARGS=(
+    --fqbn "$FQBN"
+    --port "$PORT"
+  )
+
+  for option in "${BOARD_OPTIONS[@]}"; do
+    UPLOAD_ARGS+=(--board-options "$option")
+  done
+
+  arduino-cli upload "${UPLOAD_ARGS[@]}" "$SKETCH_DIR"
 fi
