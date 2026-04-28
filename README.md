@@ -7,6 +7,7 @@ Arduino Uno car setup commands live in `arduino-uno-car/SETUP.md`.
 ESP32 bare 16-pin LCD wiring and setup live in `esp32-lcd/`.
 ESP32 I2C backpack LCD wiring and setup live in `esp32-lcd-i2c/`.
 ESP32 HW-484 sound detection lives in `esp32-hw484-sound-detector/`.
+ESP32-CAM OV3660 streaming lives in `esp32-cam-ov3660-streamer/`.
 ESP32 OV7670 camera bring-up lives in `esp32-ov7670-camera/`.
 ESP32 OV7670 full-bus phase-2 validation lives in `esp32-ov7670-camera-phase2/`.
 ESP32 OV7670 single-frame grayscale capture lives in `esp32-ov7670-camera-phase3/`.

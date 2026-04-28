@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  ./build-upload-sketch.sh --mode <compile|upload> --fqbn <fqbn> --sketch <path> [--port <port>] [--board-options <key=value[,key=value...]>]
+  ./build-upload-sketch.sh --mode <compile|upload> --fqbn <fqbn> --sketch <path> [--port <port>] [--board-options <key=value[,key=value...]>] [--upload-property <key=value>]
 
 Examples:
   ./build-upload-sketch.sh --mode compile --fqbn arduino:avr:uno --sketch ./arduino-uno-car
@@ -15,6 +15,7 @@ Notes:
   - `--mode upload` compiles first, then uploads.
   - `--port` is required only for upload mode.
   - `--board-options` can be repeated to pass Arduino board menu selections such as `UploadSpeed=115200`.
+  - `--upload-property` can be repeated to override upload-only properties such as `upload.speed=115200`.
 EOF
 }
 
@@ -50,6 +51,7 @@ FQBN=""
 SKETCH_DIR=""
 PORT=""
 BOARD_OPTIONS=()
+UPLOAD_PROPERTIES=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -71,6 +73,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --board-options)
       BOARD_OPTIONS+=("${2:-}")
+      shift 2
+      ;;
+    --upload-property)
+      UPLOAD_PROPERTIES+=("${2:-}")
       shift 2
       ;;
     -h|--help)
@@ -134,6 +140,10 @@ if [[ "$MODE" == "upload" ]]; then
 
   for option in "${BOARD_OPTIONS[@]}"; do
     UPLOAD_ARGS+=(--board-options "$option")
+  done
+
+  for property in "${UPLOAD_PROPERTIES[@]}"; do
+    UPLOAD_ARGS+=(--upload-property "$property")
   done
 
   arduino-cli upload "${UPLOAD_ARGS[@]}" "$SKETCH_DIR"
